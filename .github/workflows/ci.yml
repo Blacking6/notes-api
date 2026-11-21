@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: notes
+          POSTGRES_PASSWORD: notes
+          POSTGRES_DB: notes
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U notes -d notes"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install migrate
+        run: |
+          curl -L https://github.com/golang-migrate/migrate/releases/download/v4.18.1/migrate.linux-amd64.tar.gz | tar xvz
+          sudo mv migrate /usr/local/bin/
+
+      - name: Run migrations
+        run: migrate -path migrations -database "postgres://notes:notes@localhost:5432/notes?sslmode=disable" up
+        env:
+          DB_HOST: localhost
+
+      - name: Run unit tests
+        run: go test -v -race -count=1 ./internal/...
+
+      - name: Run integration tests
+        run: go test -v -race -count=1 -tags=integration ./tests/...
+        env:
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_USER: notes
+          DB_PASSWORD: notes
+          DB_NAME: notes
+          JWT_SECRET: test-secret-key-that-is-long-enough-for-ci-32chars
+
+      - name: Build
+        run: CGO_ENABLED=0 go build -o bin/notes-api ./cmd/api
